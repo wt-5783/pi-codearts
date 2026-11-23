@@ -80,7 +80,3 @@ export const requireCredentials = (): CodeArtsCredentials => {
     ].join('\n'),
   )
 }
-
-/** 只露前 4 后 4，用于日志和诊断输出。 */
-export const maskAccessKey = (accessKey: string): string =>
-  accessKey.length <= 8 ? '****' : `${accessKey.slice(0, 4)}…${accessKey.slice(-4)}`
