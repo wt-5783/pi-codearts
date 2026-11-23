@@ -10,6 +10,7 @@ import { CODEARTS_CHECKIN_CAMPAIGN_TYPE } from '../vendor/dsh-connect-codearts/p
 import type { AccountInfo, CreditInfo, WelfareItem } from '../vendor/dsh-connect-codearts/upstream.ts'
 import { GATEWAY, client, fetchCatalog } from './catalog.ts'
 import { credentialsFilePath } from './credentials.ts'
+import { statSync } from 'node:fs'
 
 /** 网关的领取分 claim / confirm 两步，DSH 插件只封装了 claim；confirm 端点来自 HITZY2002/codearts2api 逆向记录 §6。 */
 const CODEARTS_OPS_CONFIRM_PATH = '/v1/ops/confirm'
@@ -193,7 +194,17 @@ export const doctor = async (resolve: () => { credentials: CodeArtsCredentials; 
   try {
     const resolved = resolve()
     credentials = resolved.credentials
-    lines.push(`✓ 凭证：${resolved.source}`)
+    const ak = resolved.credentials.accessKey
+    const sk = resolved.credentials.secretKey
+    const shape = ak.length === 20 && sk.length === 40 ? '' : `（⚠ 长度异常：AK ${ak.length} 位应为 20，SK ${sk.length} 位应为 40）`
+    lines.push(`✓ 凭证：${resolved.source}  AK ${ak.slice(0, 4)}…${ak.slice(-4)}${shape}`)
+    // 凭证文件权限：组/其他可读就等于把云账号交出去
+    try {
+      const mode = statSync(credentialsFilePath()).mode & 0o777
+      if ((mode & 0o077) !== 0) lines.push(`  ⚠ 凭证文件权限 ${mode.toString(8)} 过宽，建议 chmod 600`)
+    } catch {
+      /* 走环境变量时没有文件 */
+    }
   } catch (error) {
     lines.push((error as Error).message)
     return lines.join('\n')

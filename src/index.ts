@@ -148,6 +148,7 @@ export default async function (pi: ExtensionAPI) {
       const resolved = resolveCredentials()
       if (!resolved.ok) return show(`${resolved.reason}\n${resolved.attempts.join('\n')}`)
       const snapshot = await refreshStatus()
+      updateFooter(_ctx)
       show(formatUsageReport(snapshot, resolved.source, catalog))
     },
   })
@@ -168,6 +169,7 @@ export default async function (pi: ExtensionAPI) {
       const results = await checkinAll(resolved.credentials)
       statusFetchedAt = 0
       await refreshStatus()
+      updateFooter(ctx)
       show(results.map((result) => `${result.ok ? '✓' : '✗'} ${result.title}：${result.message}`).join('\n'))
     },
   })
