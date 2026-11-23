@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext", "strict": true,
+    "noEmit": true, "allowImportingTsExtensions": true, "skipLibCheck": true,
+    "types": ["node"],
+    "paths": {
+      "@earendil-works/pi-ai": ["/usr/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/index.d.ts"],
+      "@earendil-works/pi-ai/*": ["/usr/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/*"],
+      "@earendil-works/pi-coding-agent": ["/usr/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"]
+    },
+    "baseUrl": "."
+  },
+  "include": ["src/**/*.ts"]
+}

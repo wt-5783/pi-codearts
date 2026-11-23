@@ -1,0 +1,16 @@
+{
+  "name": "pi-codearts",
+  "version": "0.1.0",
+  "description": "华为云码道 CodeArts 作为 pi coding agent 的模型 provider：IAM AK/SK 直连网关（SDK-HMAC-SHA256），实时模型目录（上下文/输出上限/思考档位/积分倍率），积分余额与每日签到命令，状态栏积分。协议层移植自 dsh-connect-codearts（MIT）。",
+  "type": "module",
+  "license": "MIT",
+  "keywords": ["pi-package", "pi-coding-agent", "pi-extension", "codearts", "huaweicloud", "madao"],
+  "engines": { "node": ">=22.19.0" },
+  "pi": { "extensions": ["./src/index.ts"] },
+  "peerDependencies": { "@earendil-works/pi-ai": "*" },
+  "scripts": {
+    "doctor": "node scripts/doctor.mjs",
+    "catalog": "node scripts/catalog.mjs",
+    "usage": "node scripts/usage.mjs"
+  }
+}
