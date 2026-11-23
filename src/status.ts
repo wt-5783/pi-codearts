@@ -6,9 +6,10 @@
  */
 import type { CodeArtsCredentials } from '../vendor/dsh-connect-codearts/protocol/sign.ts'
 import { signRequest } from '../vendor/dsh-connect-codearts/protocol/sign.ts'
-import { CODEARTS_CHECKIN_CAMPAIGN_TYPE, CODEARTS_GATEWAY } from '../vendor/dsh-connect-codearts/protocol/types.ts'
+import { CODEARTS_CHECKIN_CAMPAIGN_TYPE } from '../vendor/dsh-connect-codearts/protocol/types.ts'
 import type { AccountInfo, CreditInfo, WelfareItem } from '../vendor/dsh-connect-codearts/upstream.ts'
-import { client, fetchCatalog } from './catalog.ts'
+import { GATEWAY, client, fetchCatalog } from './catalog.ts'
+import { credentialsFilePath } from './credentials.ts'
 
 /** 网关的领取分 claim / confirm 两步，DSH 插件只封装了 claim；confirm 端点来自 HITZY2002/codearts2api 逆向记录 §6。 */
 const CODEARTS_OPS_CONFIRM_PATH = '/v1/ops/confirm'
@@ -20,8 +21,6 @@ export interface StatusSnapshot {
   readonly welfare: readonly WelfareItem[]
   readonly problems: readonly string[]
 }
-
-const log = (line: string): void => console.error(`[pi-codearts] ${line}`)
 
 /** 三个只读接口并行；任何一个失败都只记到 problems，不影响其余。 */
 export const fetchStatus = async (credentials: CodeArtsCredentials, signal?: AbortSignal): Promise<StatusSnapshot> => {
@@ -121,7 +120,7 @@ const confirmWelfare = async (
   campaignId: number,
   signal?: AbortSignal,
 ): Promise<{ ok: boolean; detail: string }> => {
-  const url = new URL(`${CODEARTS_GATEWAY}${CODEARTS_OPS_CONFIRM_PATH}`)
+  const url = new URL(`${GATEWAY}${CODEARTS_OPS_CONFIRM_PATH}`)
   const body = JSON.stringify({ campaignId })
   const signed = signRequest({ method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body, credentials })
   try {
@@ -203,8 +202,11 @@ export const doctor = async (resolve: () => { credentials: CodeArtsCredentials; 
     const account = await client.currentUser(credentials)
     lines.push(`✓ 身份：${account.userName ?? account.userId ?? '—'}${account.domainName === undefined ? '' : ` @ ${account.domainName}`}`)
   } catch (error) {
-    lines.push(`✗ 身份：${(error as Error).message}`)
-    lines.push('  → 常见原因：AK/SK 复制不全；该密钥所属账号未开通码道；或密钥已被禁用。')
+    const message = (error as Error).message
+    const authish = /APIG\.0301|APIG\.0613|APIG\.0602|signature fail|Incorrect IAM authentication|认证失败/i.test(message)
+    lines.push(authish ? '✗ 身份：AK/SK 校验未通过（凭证错误，或密钥已被删除/禁用）' : `✗ 身份：${message}`)
+    lines.push('  → 核对华为云控制台「我的凭证 → 访问密钥」：AK 为 20 位、SK 为 40 位，需完整复制且未被删除。')
+    lines.push(`  → 若凭证无误仍失败，确认该账号已开通码道套餐；当前文件：${credentialsFilePath()}`)
     return lines.join('\n')
   }
   try {

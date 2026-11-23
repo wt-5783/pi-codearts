@@ -18,7 +18,7 @@
 │   ├── index.ts          pi 扩展入口：注册 provider、4 个命令、状态栏
 │   ├── credentials.ts    AK/SK 读取（环境变量 → ~/.pi/agent/codearts.credentials.json）
 │   ├── catalog.ts        模型目录 + 思考档位 → pi 模型定义；缓存到 ~/.pi/agent/cache/pi-codearts/
-│   ├── signed-fetch.ts   签名 fetch：请求体归一化、签名、必须头、错误归一化
+│   ├── signed-fetch.ts   签名 fetch：请求体归一化、签名、必须头、错误归一化 + 常见错误码中文提示
 │   └── status.ts         账号 / 积分 / 签到 / 诊断
 ├── vendor/dsh-connect-codearts/   协议层（MIT，原样）：sign / body / sse / errors / upstream
 ├── scripts/
@@ -92,6 +92,42 @@ pi 的 `--print` / `--list-models` / 子代理模式不联网刷新模型目录�
 - `reasoning_effort` 为 `off`/`none` 时不传
 - 丢掉网关不认识的字段：`store` `metadata` `parallel_tool_calls` `stream_options` `max_completion_tokens` 等
 
+## 已验证（2026-11-23）
+
+| 项 | 结果 |
+|---|---|
+| IAM AK/SK 直连（身份 / 目录 / 积分） | ✓ 1 秒内返回 |
+| 对话（流式 + 思考 + usage 入账） | ✓ `391` / `408` / `221`，5–7 秒 |
+| 工具调用往返（read → bash → 结果回传） | ✓ |
+| 思考档位 `low` / `high` / `max` | ✓；未声明的档位会被 pi 就近夹取（low→high） |
+| 无档位声明的模型（openpangu） | ✓ 不发 `reasoning_effort` |
+| 图片输入（64×64 PNG，左右两色） | ✓ 回答"红色，蓝色" |
+| 错误凭证 | ✓ 显示「AK/SK 校验未通过 + 核对方法」，不崩 |
+| 无权限模型 | ✓ 显示 `TM.000010051` + 「不在套餐内」提示 |
+| 首次运行无缓存（任意模式） | ✓ 工厂内 1.3 秒拉目录并写缓存 |
+| 离线（`PI_OFFLINE=1` + 无缓存） | ✓ 降级为 0 模型，不崩溃 |
+| 4 个命令（RPC 模式逐条执行） | ✓ |
+| 默认不写 stderr / console（避免画花 TUI） | ✓ |
+
+未验证：签到 `claim → confirm` 的 confirm 步骤（今天已确认过，无法重放）；并发子代理打满 3 会话时的排队表现。
+
+## 可调环境变量
+
+| 变量 | 作用 |
+|---|---|
+| `PI_CODEARTS_GATEWAY` | 覆盖网关地址（默认 `https://snap-access.cn-north-4.myhuaweicloud.com`，必须是 https） |
+| `PI_CODEARTS_CREDENTIALS` | 覆盖凭证文件路径（默认 `~/.pi/agent/codearts.credentials.json`） |
+| `PI_CODEARTS_CACHE` | 覆盖目录缓存路径（默认 `~/.pi/agent/cache/pi-codearts/catalog.json`） |
+| `PI_CODEARTS_DEBUG` | 设为任意值则把扩展日志打到 stderr（默认只进内存，`/codearts-doctor` 末尾可见最近 30 条） |
+| `CODEARTS_CLI_AK` / `CODEARTS_CLI_SK` | 直接给 AK/SK（与 dsh-connect-codearts 同名，优先于文件） |
+
+## 已知边界
+
+- **并发**：华为单账号约 3 个并发会话，释放较慢。并行子代理同时打码道会排队或报 `TM.00001041`（已附中文提示）。
+- **思考与正文共享 `max_tokens`**：档位越高，思考占用越多；`max_tokens` 太小会出现「只思考、正文为空、`finish_reason: length`」。
+- **积分计费**：pi 的 USD 成本表填 0（码道按积分计费，无法折算）；真实消耗看 `/codearts-usage` 与状态栏。
+- **没有 `off` 档**：声明了档位的模型都「始终思考」（上游明确拒绝关闭），因此 pi 里这些模型没有关闭思考的选项。
+
 ## 排障
 
 | 现象 | 处理 |
@@ -102,6 +138,8 @@ pi 的 `--print` / `--list-models` / 子代理模式不联网刷新模型目录�
 | 回复为空 / `finish_reason: length` | 思考吃光了 `max_tokens`，提高档位或换模型 |
 | Ctrl+L 里没有码道模型 | `pi --list-models \| grep codearts`；为空则进一次 TUI 或 `node scripts/catalog.mjs` |
 | 想换账号 | 改 `~/.pi/agent/codearts.credentials.json`，`/reload` |
+| 状态栏不显示积分 | 确认 `settings.json` 的 `powerline.preset` 含 `extension_statuses`（`default` 预设自带），且 `hiddenExtensionStatusKeys` 里没有 `codearts` |
+| 想深挖日志 | `PI_CODEARTS_DEBUG=1 pi`，或看 `/codearts-doctor` 末尾的最近日志 |
 
 ## 更新协议层
 

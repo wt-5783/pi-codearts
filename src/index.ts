@@ -9,26 +9,64 @@
  *   3. 命令：/codearts-usage  /codearts-checkin  /codearts-models  /codearts-doctor
  *   4. 状态栏：用码道模型时显示「码道 积分 剩余/总量」，每次回复后节流刷新
  *
- * 不开端口、不起子进程、不写华为凭证；唯一的落盘是模型目录缓存。
+ * 不开端口、不写华为凭证、不起子进程；唯一的落盘是模型目录缓存。
+ * 注意：pi 不接管扩展的 console/stderr 输出，直接写会把 TUI 画花，因此日志只进内存环形缓冲，
+ * 只有设置 PI_CODEARTS_DEBUG=1 时才打到 stderr。
  */
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/compat'
 import { requireCredentials, resolveCredentials } from './credentials.ts'
-import { BASE_URL, PROVIDER_API, PROVIDER_ID, catalogPath, fetchCatalog, readCatalogCache, toPiModel, writeCatalogCache, type CatalogEntry } from './catalog.ts'
+import {
+  BASE_URL,
+  PROVIDER_API,
+  PROVIDER_ID,
+  catalogPath,
+  fetchCatalog,
+  readCatalogCache,
+  setLogSink,
+  toPiModel,
+  writeCatalogCache,
+  type CatalogEntry,
+} from './catalog.ts'
 import { createSignedFetch } from './signed-fetch.ts'
 import { checkinAll, creditLine, doctor, fetchStatus, formatUsageReport, reconfirmPending, type StatusSnapshot } from './status.ts'
 
 const STATUS_KEY = 'codearts'
 /** 状态栏刷新节流：回复后最多每 60 秒拉一次积分（只读接口，不消耗积分）。 */
 const STATUS_REFRESH_MS = 60_000
-
-const log = (line: string): void => console.error(`[pi-codearts] ${line}`)
+/** 首次启动（无缓存）时拉目录的超时：目录是两次只读请求，8 秒足够，失败也不该拖住 pi。 */
+const FIRST_FETCH_TIMEOUT_MS = 8_000
+const LOG_LIMIT = 30
 
 /** 占位密钥：pi 要求定义模型的 provider 必须有 apiKey；真实鉴权在签名 fetch 里完成。 */
 const PLACEHOLDER_KEY = 'codearts-iam-ak-sk'
 
-export default function (pi: ExtensionAPI) {
+export default async function (pi: ExtensionAPI) {
+  // ---------------------------------------------------------------------------
+  // 日志：环形缓冲 + 可选 stderr
+  // ---------------------------------------------------------------------------
+  const logLines: string[] = []
+  const note = (line: string): void => {
+    logLines.push(`${new Date().toLocaleTimeString('zh-CN')} ${line}`)
+    if (logLines.length > LOG_LIMIT) logLines.shift()
+    if (process.env['PI_CODEARTS_DEBUG'] !== undefined) process.stderr.write(`[pi-codearts] ${line}\n`)
+  }
+  setLogSink(note)
+
+  // ---------------------------------------------------------------------------
+  // 模型目录：优先磁盘缓存；首次运行（无缓存）时在工厂里拉一次
+  // ---------------------------------------------------------------------------
   let catalog: CatalogEntry[] = readCatalogCache()
+  if (catalog.length === 0 && process.env['PI_OFFLINE'] === undefined) {
+    try {
+      catalog = await fetchCatalog(requireCredentials(), AbortSignal.timeout(FIRST_FETCH_TIMEOUT_MS))
+      writeCatalogCache(catalog)
+      note(`首次拉取目录成功：${catalog.length} 个模型`)
+    } catch (error) {
+      note(`首次拉取目录失败（${(error as Error).message}）；Ctrl+L 或 /codearts-models 可重试`)
+    }
+  }
+
   let status: StatusSnapshot | undefined
   let statusFetchedAt = 0
   let statusInFlight: Promise<StatusSnapshot> | undefined
@@ -40,7 +78,7 @@ export default function (pi: ExtensionAPI) {
         status = await fetchStatus(requireCredentials())
         statusFetchedAt = Date.now()
       } catch (error) {
-        log(`刷新积分失败: ${(error as Error).message}`)
+        note(`刷新积分失败: ${(error as Error).message}`)
       } finally {
         statusInFlight = undefined
       }
@@ -59,7 +97,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   const show = (text: string): void => {
-    pi.sendMessage({ customType: 'pi-codearts', content: text, display: true }, { triggerTurn: false })
+    void pi.sendMessage({ customType: 'pi-codearts', content: text, display: true }, { triggerTurn: false })
   }
 
   // ---------------------------------------------------------------------------
@@ -75,14 +113,16 @@ export default function (pi: ExtensionAPI) {
     /** pi 在 TUI 启动和按 Ctrl+L 时调用；print 模式不调用（用缓存）。 */
     async refreshModels(context) {
       if (!context.allowNetwork || context.signal.aborted) return catalog.map(toPiModel)
-      const credentials = requireCredentials()
-      catalog = await fetchCatalog(credentials, context.signal)
+      catalog = await fetchCatalog(requireCredentials(), context.signal)
       writeCatalogCache(catalog)
       void refreshStatus()
       return catalog.map(toPiModel)
     },
 
-    /** pi 把请求交到这里；除 fetch 外的一切（消息转换、工具调用、思考、用量、中断）都由 pi 自带的 openai-completions 处理。 */
+    /**
+     * pi 把请求交到这里；除 fetch 外的一切（消息转换、工具调用、思考、用量、中断）
+     * 都由 pi 自带的 openai-completions 处理。
+     */
     streamSimple(model, context, options) {
       const credentials = requireCredentials()
       const routed = {
@@ -94,7 +134,7 @@ export default function (pi: ExtensionAPI) {
       return openAICompletionsApi().streamSimple(routed as never, context, {
         ...options,
         apiKey: PLACEHOLDER_KEY,
-        fetch: createSignedFetch(credentials, log),
+        fetch: createSignedFetch(credentials, note),
       } as never)
     },
   })
@@ -121,7 +161,7 @@ export default function (pi: ExtensionAPI) {
       const claimable = snapshot.welfare.filter((item) => item.claimable)
       if (claimable.length === 0) {
         const notes = await reconfirmPending(resolved.credentials)
-        return show(['今天没有可领取的签到积分。', ...notes.map((note) => `  ${note}`)].join('\n'))
+        return show(['今天没有可领取的签到积分。', ...notes.map((line) => `  ${line}`)].join('\n'))
       }
       const ok = await ctx.ui.confirm('码道签到', `将领取 ${claimable.length} 项：${claimable.map((item) => item.title).join('、')}`)
       if (!ok) return
@@ -146,22 +186,27 @@ export default function (pi: ExtensionAPI) {
       const lines = catalog.map((entry) => {
         const ctx = entry.contextWindow > 0 ? `${Math.round(entry.contextWindow / 1024)}K` : '—'
         const max = entry.maxTokens > 0 ? `${Math.round(entry.maxTokens / 1024)}K` : '—'
-        const strengths = entry.strengths.length === 0 ? '' : `  档位 ${entry.strengths.join('/')}${entry.defaultStrength === undefined ? '' : `（默认 ${entry.defaultStrength}）`}`
+        const strengths =
+          entry.strengths.length === 0
+            ? ''
+            : `  档位 ${entry.strengths.join('/')}${entry.defaultStrength === undefined ? '' : `（默认 ${entry.defaultStrength}）`}`
         const vision = entry.supportsImages ? '  👁' : ''
-        return `  ${entry.id.padEnd(28)} ${entry.ratioDisplay ?? '—'.padEnd(6).trim()}  ctx ${ctx.padEnd(5)} out ${max.padEnd(5)}${strengths}${vision}`
+        return `  ${entry.id.padEnd(28)} ${entry.ratioDisplay ?? '—'}  ctx ${ctx.padEnd(5)} out ${max.padEnd(5)}${strengths}${vision}`
       })
       show([`码道模型目录（${catalog.length} 个，缓存 ${catalogPath()}）`, ...lines].join('\n'))
     },
   })
 
   pi.registerCommand('codearts-doctor', {
-    description: '码道自检：凭据 → 身份 → 目录 → 积分',
+    description: '码道自检：凭据 → 身份 → 目录 → 积分（附最近日志）',
     handler: async (_args: string, _ctx: ExtensionCommandContext) => {
-      show(await doctor(() => {
+      const report = await doctor(() => {
         const resolved = resolveCredentials()
         if (!resolved.ok) throw new Error([resolved.reason, ...resolved.attempts].join('\n'))
         return { credentials: resolved.credentials, source: resolved.source }
-      }))
+      })
+      const logs = logLines.length === 0 ? '' : `\n\n最近日志（${logLines.length} 条）：\n${logLines.map((line) => `  ${line}`).join('\n')}`
+      show(report + logs)
     },
   })
 

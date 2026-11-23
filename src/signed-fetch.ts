@@ -68,7 +68,13 @@ export const normalizeRequestBody = (body: unknown): unknown => {
     )
   }
 
-  const requested = typeof out['max_tokens'] === 'number' ? out['max_tokens'] : undefined
+  // 有的调用方只给 max_completion_tokens；丢弃该字段前先把它当作请求值，否则会被悄悄改成默认值
+  const requested =
+    typeof out['max_tokens'] === 'number'
+      ? out['max_tokens']
+      : typeof out['max_completion_tokens'] === 'number'
+        ? out['max_completion_tokens']
+        : undefined
   out['max_tokens'] = clampMaxTokens(requested)
 
   if (Array.isArray(out['tools']) && out['tools'].length > 0) {
@@ -83,6 +89,25 @@ export const normalizeRequestBody = (body: unknown): unknown => {
 
   for (const field of DROPPED_FIELDS) delete out[field]
   return out
+}
+
+/**
+ * 常见业务码的中文解释。华为的报错文案本身可读，但「下一步怎么做」往往缺失；
+ * 这里只补可执行的一句，不改写原始文案。
+ */
+const HINT_BY_CODE = [
+  // 认证类放在最前：DSH 的分类器把 5xx 上的 APIG.0613 归到「服务端临时故障」，对错凭证极具误导
+  [/APIG\.0301|APIG\.0613|APIG\.0602|signature fail|Incorrect IAM authentication/i, 'AK/SK 校验未通过：核对「我的凭证 → 访问密钥」中的 AK（20 位）与 SK（40 位）是否完整、密钥是否已被删除或禁用'],
+  [/TM\.00001041/i, '并发会话数已达上限（单账号约 3 个）：等上一轮结束，或减少并行子代理'],
+  [/TM\.000010051/i, '该模型不在你的码道套餐内：用 /codearts-models 换一个'],
+  [/ModelArts\.81001/i, '思考档位不被该模型接受：用 --thinking low / high / max'],
+  [/STS5\.1806|invalid.*token/i, '凭证无效：检查 AK/SK 是否完整、是否已被禁用'],
+  [/APIG\.0101/i, '网关路径不存在：多为区域/网关地址不对（PI_CODEARTS_GATEWAY）'],
+] as const
+
+const hintFor = (code: string, message: string): string | undefined => {
+  for (const [pattern, hint] of HINT_BY_CODE) if (pattern.test(code) || pattern.test(message)) return hint
+  return undefined
 }
 
 /** 从华为各种错误体里抠出业务码和文案。 */
@@ -129,7 +154,8 @@ const pipeInlineErrors = (body: ReadableStream<Uint8Array>, log: (line: string) 
           const inline = inlineErrorOf(line)
           if (inline !== undefined) {
             log(`upstream inline error: ${inline.code} ${inline.message}`)
-            controller.error(new Error(`码道 ${inline.code}: ${inline.message}`))
+            const hint = hintFor(inline.code, inline.message)
+            controller.error(new Error(`码道 ${inline.code}: ${inline.message}${hint === undefined ? '' : `\n→ ${hint}`}`))
             return
           }
           controller.enqueue(encoder.encode(`${line}\n`))
@@ -140,7 +166,8 @@ const pipeInlineErrors = (body: ReadableStream<Uint8Array>, log: (line: string) 
           const inline = inlineErrorOf(buffer)
           if (inline !== undefined) {
             log(`upstream inline error: ${inline.code} ${inline.message}`)
-            controller.error(new Error(`码道 ${inline.code}: ${inline.message}`))
+            const hint = hintFor(inline.code, inline.message)
+            controller.error(new Error(`码道 ${inline.code}: ${inline.message}${hint === undefined ? '' : `\n→ ${hint}`}`))
             return
           }
           controller.enqueue(encoder.encode(buffer))
@@ -230,8 +257,13 @@ export const createSignedFetch = (
       const text = await response.text().catch(() => '')
       const detail = parseHuaweiError(text, response.status)
       log(`upstream http ${response.status}: ${detail.code} ${detail.message}`)
+      const hint = hintFor(detail.code, detail.message)
       const payload = JSON.stringify({
-        error: { message: `码道 ${detail.code}: ${detail.message}`, type: 'api_error', code: detail.code },
+        error: {
+          message: `码道 ${detail.code}: ${detail.message}${hint === undefined ? '' : `\n→ ${hint}`}`,
+          type: 'api_error',
+          code: detail.code,
+        },
       })
       return new Response(payload, {
         status: response.status,
