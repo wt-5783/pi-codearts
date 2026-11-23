@@ -19,10 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-This project is adapted from dsh-connect-codearts (https://github.com/anheon/dsh-connect-codearts),
-Copyright (c) 2026 dsh-connect-codearts contributors, MIT License.
-Files under vendor/dsh-connect-codearts/ are copied verbatim from that project
-and remain under its original license (see vendor/dsh-connect-codearts/LICENSE).
