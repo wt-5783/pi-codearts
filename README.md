@@ -1,19 +1,23 @@
 # pi-codearts — 华为云码道 CodeArts 作为 pi 的模型 provider
 
-把华为云码道（CodeArts）代码智能体套餐里的模型接进 [pi coding agent](https://github.com/earendil-works/pi)，
+> **改编自（adapted from）[anheon/dsh-connect-codearts](https://github.com/anheon/dsh-connect-codearts)**（MIT License）
+> ——那是 DeepSeek Harness（DSH）的码道插件；本项目把它移植为 [pi coding agent](https://github.com/earendil-works/pi) 的扩展。
+> 协议层（`vendor/dsh-connect-codearts/`）原样复用，其余为针对 pi 的重新实现。详见[来源与致谢](#来源与致谢attribution)。
+
+把华为云码道（CodeArts）代码智能体套餐里的模型接进 pi，
 和 GLM / Codex 等其他 provider 并列，**Ctrl+L 无感切换**；显示剩余积分、各模型积分倍率，支持每日签到。
 
 - **直连**：进程内用 IAM 长期 AK/SK 对每个请求做 `SDK-HMAC-SHA256` 签名，直达
   `https://snap-access.cn-north-4.myhuaweicloud.com`。不开端口、不起子进程、不刷新 token、不用重新登录。
 - **复用 pi 的成熟实现**：消息转换、工具调用、思考内容、用量统计、中断，全部由 pi 自带的
   `openai-completions` 实现处理；本项目只提供「带签名的 fetch」和模型目录。
-- **协议层来自 [dsh-connect-codearts](https://github.com/anheon/dsh-connect-codearts)**（MIT），
+- **协议层改编自 [dsh-connect-codearts](https://github.com/anheon/dsh-connect-codearts)**（MIT），
   原样放在 `vendor/`，零 DSH 依赖，只 import Node 内置模块。
 
 ## 目录
 
 ```
-~/projects/pi-codearts/
+pi-codearts/
 ├── src/
 │   ├── index.ts          pi 扩展入口：注册 provider、4 个命令、状态栏
 │   ├── credentials.ts    AK/SK 读取（环境变量 → ~/.pi/agent/codearts.credentials.json）
@@ -27,11 +31,26 @@
 │   ├── usage.mjs         积分 / 签到 / 倍率报告
 │   └── rpc-smoke.py      用 pi RPC 模式无终端地跑一遍命令
 ├── package.json          pi 扩展清单（pi.extensions → src/index.ts）
-└── tsconfig.json         编辑器类型检查用（映射到全局安装的 pi）
+└── tsconfig.json         编辑器类型检查用（paths 指向本机全局安装的 pi，换机器按 `npm root -g` 调整）
 ```
 
-安装方式是**符号链接**：`~/.pi/agent/extensions/pi-codearts → ~/projects/pi-codearts`。
-改源码后在 pi 里 `/reload` 即生效；不需要构建步骤（pi 的加载器直接跑 TS）。
+## 安装
+
+前提：Node.js ≥ 22.19、pi coding agent，以及华为云 IAM 访问密钥（控制台「我的凭证 → 访问密钥」）。
+
+```bash
+# 方式一：让 pi 从 GitHub 拉取（推荐，pi 会钉住 tag）
+pi install git:github.com/wt-5783/pi-codearts@v0.1.0
+
+# 方式二：克隆后用符号链接（适合改源码：改完 /reload 即生效，无需构建）
+git clone https://github.com/wt-5783/pi-codearts ~/projects/pi-codearts
+ln -s ~/projects/pi-codearts ~/.pi/agent/extensions/pi-codearts
+```
+
+然后把 AK/SK 写进 `~/.pi/agent/codearts.credentials.json`（`{"accessKey":"…","secretKey":"…"}`，`chmod 600`），
+或设置环境变量 `CODEARTS_CLI_AK` / `CODEARTS_CLI_SK`。在 pi 里 `/codearts-doctor` 自检。
+
+二选一，不要同时用（provider 会被注册两次）。
 
 ## 请求链路
 
@@ -127,6 +146,27 @@ pi 的 `--print` / `--list-models` / 子代理模式不联网刷新模型目录�
 - **思考与正文共享 `max_tokens`**：档位越高，思考占用越多；`max_tokens` 太小会出现「只思考、正文为空、`finish_reason: length`」。
 - **积分计费**：pi 的 USD 成本表填 0（码道按积分计费，无法折算）；真实消耗看 `/codearts-usage` 与状态栏。
 - **没有 `off` 档**：声明了档位的模型都「始终思考」（上游明确拒绝关闭），因此 pi 里这些模型没有关闭思考的选项。
+
+## 来源与致谢（Attribution）
+
+本项目**改编自** [anheon/dsh-connect-codearts](https://github.com/anheon/dsh-connect-codearts) v0.1.6（commit `ded7a7e`，MIT License）。
+它不是 GitHub 意义上的 fork（宿主从 DSH 换成了 pi，代码库不同），而是移植 + 改编：
+
+| 部分 | 来源 | 说明 |
+|---|---|---|
+| `vendor/dsh-connect-codearts/protocol/{types,sign,body,sse,errors}.ts`、`upstream.ts` | dsh-connect-codearts，**原样复制** | `SDK-HMAC-SHA256` 签名、请求体归一化规则、SSE 解析、错误分类、模型目录 / 思考档位 / 积分 / 福利接口客户端 |
+| `src/signed-fetch.ts` 的归一化规则 | 依据其 `protocol/body.ts` 的实测结论重写 | 在 pi 的 `fetch` 层做同样的事 |
+| 签到 `confirm` 端点 | [HITZY2002/codearts2api](https://github.com/HITZY2002/codearts2api) 的逆向记录 §6 | DSH 插件只封装了 `claim`；`confirm` 的路径与请求体来自该记录 |
+| 其余（provider 注册、`streamSimple`、命令、状态栏、目录缓存） | 本项目新写 | 针对 pi 的扩展 API |
+
+`vendor/` 内源码的注释还提到它们所参考的更上游实现（均为 MIT）：[XLNC-L/dsh-connect-madao](https://github.com/XLNC-L/dsh-connect-madao)、
+Alanine-孔硕 的 dsh-huaweicloud-connect。原始许可见 `vendor/dsh-connect-codearts/LICENSE`，声明见 `THIRD_PARTY_NOTICES.md`。
+
+## 免责声明
+
+- 本项目为**非官方**实现，与华为云、DeepSeek Harness、pi 均无关联，也未获其背书。
+- 接入方式基于对码道官方客户端协议的逆向，可能违反华为云服务条款；账号风险由使用者自行承担。
+- IAM 访问密钥等同于你的华为云账号，请只放在 0600 权限的本地文件或环境变量中，不要提交进任何仓库。
 
 ## 排障
 
