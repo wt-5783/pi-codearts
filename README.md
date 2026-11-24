@@ -38,6 +38,8 @@ pi-codearts/
 
 前提：Node.js ≥ 22.19、pi coding agent，以及华为云 IAM 访问密钥（控制台「我的凭证 → 访问密钥」）。
 
+### 1. 安装扩展（两种方式二选一，不要同时用，否则 provider 会被注册两次）
+
 ```bash
 # 方式一：让 pi 从 GitHub 拉取（推荐，pi 会钉住 tag）
 pi install git:github.com/wt-5783/pi-codearts@v0.1.0
@@ -47,10 +49,26 @@ git clone https://github.com/wt-5783/pi-codearts ~/projects/pi-codearts
 ln -s ~/projects/pi-codearts ~/.pi/agent/extensions/pi-codearts
 ```
 
-然后把 AK/SK 写进 `~/.pi/agent/codearts.credentials.json`（`{"accessKey":"…","secretKey":"…"}`，`chmod 600`），
-或设置环境变量 `CODEARTS_CLI_AK` / `CODEARTS_CLI_SK`。在 pi 里 `/codearts-doctor` 自检。
+### 2. 配置凭证并自检
 
-二选一，不要同时用（provider 会被注册两次）。
+写入 `~/.pi/agent/codearts.credentials.json`（推荐，`0600` 权限）：
+
+```bash
+mkdir -p ~/.pi/agent
+cat > ~/.pi/agent/codearts.credentials.json << 'EOF'
+{"accessKey":"你的AK","secretKey":"你的SK"}
+EOF
+chmod 600 ~/.pi/agent/codearts.credentials.json
+```
+
+或者通过环境变量传入：
+
+```bash
+export CODEARTS_CLI_AK="你的AK"
+export CODEARTS_CLI_SK="你的SK"
+```
+
+配置完成后，启动 `pi` 执行 `/codearts-doctor`（或运行 `node scripts/doctor.mjs`）自检。
 
 ## 请求链路
 
@@ -83,11 +101,10 @@ pi --list-models | grep codearts
 **状态栏**：当前模型是码道时显示 `码道 积分 剩余/总量`；切到别的 provider 自动消失。每次回复后最多 60 秒刷一次。
 
 **思考档位**：按网关为每个模型声明的档位开放（例如 GLM-5.2 只有 high/max，glm-5.3 有 low/high/max，
-openpangu 未声明 → 当作非推理模型、不发 `reasoning_effort`）。你 settings 里的 `defaultThinkingLevel: low`
-在只有 high/max 的模型上会被 pi 夹到 `high`。
+openpangu 未声明 → 当作非推理模型、不发 `reasoning_effort`）。若 `settings.json` 中配置的
+`defaultThinkingLevel`（如 `low`）不在当前模型支持的档位内（如仅支持 `high/max`），pi 会自动夹取到最接近的可用档位（`high`）。
 
-**模型名**：`显示名 · 模型ID 倍率`，例如 `GLM-5.3 · glm-5.3 0.79x`。便宜且快：`glm-5.3-flash`（0.08x）、
-`openpangu-2.1-pro`（0.07x）；最贵：`kimi-k3`（2.38x）。
+**模型名**：`显示名 · 模型ID 倍率`，例如 `GLM-5.3 · glm-5.3 0.79x`。以下倍率为示例，具体以 `/codearts-models` 实时返回为准（如 `glm-5.3-flash` 约 `0.08x`、`openpangu-2.1-pro` 约 `0.07x`、`kimi-k3` 约 `2.38x`）。
 
 ## 凭证
 
@@ -95,13 +112,13 @@ openpangu 未声明 → 当作非推理模型、不发 `reasoning_effort`）。�
   （`{"accessKey":"…","secretKey":"…"}`，0600；路径可用 `PI_CODEARTS_CREDENTIALS` 覆盖）。
 - AK/SK 在华为云控制台「我的凭证 → 访问密钥」创建。**它是长期云凭证，等同于账号**：不要提交、不要外传。
   想降风险可建一个 IAM 子用户再建 AK/SK（码道是否认子用户身份未验证）。
-- 项目目录里没有任何密钥；`~/private/` 下的 CSV 是你自己的备份，扩展不读它。
+- 项目目录里不保存任何密钥，扩展也不会读取其他位置的个人备份文件。
 
 ## 缓存与非交互模式
 
-pi 的 `--print` / `--list-models` / 子代理模式不联网刷新模型目录，扩展启动时读
-`~/.pi/agent/cache/pi-codearts/catalog.json`（TUI 启动和每次 Ctrl+L 会刷新并写回）。
-华为上下架模型后进一次 TUI，或跑 `node scripts/catalog.mjs`。
+pi 的 `--print` / `--list-models` / 子代理模式在已有缓存时不联网刷新模型目录，扩展启动时直接读取
+`~/.pi/agent/cache/pi-codearts/catalog.json`（仅首次无缓存且未设 `PI_OFFLINE` 时会在初始化阶段拉取一次并写缓存；TUI 启动和每次 `Ctrl+L` 会自动刷新并写回）。
+华为上下架模型后进一次 TUI（或按 `Ctrl+L`），也可以直接运行 `node scripts/catalog.mjs` 更新缓存。
 
 ## 请求体归一化（signed-fetch.ts，规则来自 DSH 插件实测）
 
@@ -111,24 +128,24 @@ pi 的 `--print` / `--list-models` / 子代理模式不联网刷新模型目录�
 - `reasoning_effort` 为 `off`/`none` 时不传
 - 丢掉网关不认识的字段：`store` `metadata` `parallel_tool_calls` `stream_options` `max_completion_tokens` 等
 
-## 已验证（2026-11-23）
+## 实测状态（2026-11-23）
 
 | 项 | 结果 |
 |---|---|
 | IAM AK/SK 直连（身份 / 目录 / 积分） | ✓ 1 秒内返回 |
-| 对话（流式 + 思考 + usage 入账） | ✓ `391` / `408` / `221`，5–7 秒 |
+| 对话（流式 + 思考 + usage 入账） | ✓ 正常返回并统计用量（约 5–7 秒） |
 | 工具调用往返（read → bash → 结果回传） | ✓ |
-| 思考档位 `low` / `high` / `max` | ✓；未声明的档位会被 pi 就近夹取（low→high） |
+| 思考档位 `low` / `high` / `max` | ✓；未声明的档位会被 pi 就近夹取（如 low → high） |
 | 无档位声明的模型（openpangu） | ✓ 不发 `reasoning_effort` |
-| 图片输入（64×64 PNG，左右两色） | ✓ 回答"红色，蓝色" |
+| 图片输入（64×64 PNG，左右两色） | ✓ 正确识别图像内容 |
 | 错误凭证 | ✓ 显示「AK/SK 校验未通过 + 核对方法」，不崩 |
 | 无权限模型 | ✓ 显示 `TM.000010051` + 「不在套餐内」提示 |
-| 首次运行无缓存（任意模式） | ✓ 工厂内 1.3 秒拉目录并写缓存 |
+| 首次运行无缓存（任意模式） | ✓ 扩展初始化阶段约 1.3 秒拉目录并写缓存 |
 | 离线（`PI_OFFLINE=1` + 无缓存） | ✓ 降级为 0 模型，不崩溃 |
 | 4 个命令（RPC 模式逐条执行） | ✓ |
 | 默认不写 stderr / console（避免画花 TUI） | ✓ |
 
-未验证：签到 `claim → confirm` 的 confirm 步骤（今天已确认过，无法重放）；并发子代理打满 3 会话时的排队表现。
+未覆盖实测项：签到 `claim → confirm` 中的 `confirm` 步骤（按逆向记录实现，因测试账号当日已签到无法重放未确认流）；并发子代理打满 3 会话时的排队表现。
 
 ## 可调环境变量
 
@@ -137,7 +154,7 @@ pi 的 `--print` / `--list-models` / 子代理模式不联网刷新模型目录�
 | `PI_CODEARTS_GATEWAY` | 覆盖网关地址（默认 `https://snap-access.cn-north-4.myhuaweicloud.com`，必须是 https） |
 | `PI_CODEARTS_CREDENTIALS` | 覆盖凭证文件路径（默认 `~/.pi/agent/codearts.credentials.json`） |
 | `PI_CODEARTS_CACHE` | 覆盖目录缓存路径（默认 `~/.pi/agent/cache/pi-codearts/catalog.json`） |
-| `PI_CODEARTS_DEBUG` | 设为任意值则把扩展日志打到 stderr（默认只进内存，`/codearts-doctor` 末尾可见最近 30 条） |
+| `PI_CODEARTS_DEBUG` | 只要有定义（包括 `0` 或空串，取消请 `unset`）就把扩展日志打到 stderr；默认只进内存，`/codearts-doctor` 末尾可见最近 30 条 |
 | `CODEARTS_CLI_AK` / `CODEARTS_CLI_SK` | 直接给 AK/SK（与 dsh-connect-codearts 同名，优先于文件） |
 
 ## 已知边界
@@ -174,10 +191,10 @@ Alanine-孔硕 的 dsh-huaweicloud-connect。原始许可见 `vendor/dsh-connect
 |---|---|
 | `/codearts-doctor` 在「身份」处失败 | AK/SK 复制不全、密钥被禁用、或该账号未开通码道 |
 | 对话报 `码道 TM.000010051 您当前无权调用该模型` | 该模型不在你的套餐里，换一个 |
-| 对话报 `InferHub.ModelArts.81001 … 请使用 low、high 或 max` | 不应出现（档位按模型声明开放）；若出现说明网关改了档位表，`/codearts-models` 刷新 |
-| 回复为空 / `finish_reason: length` | 思考吃光了 `max_tokens`，提高档位或换模型 |
+| 对话报 `InferHub.ModelArts.81001 … 请使用 low、high 或 max` | 不应出现（档位按模型声明开放）；若出现说明网关改了档位表，运行 `/codearts-models` 刷新缓存后按 `Ctrl+L`（或 `/reload`） |
+| 回复为空 / `finish_reason: length` | 思考吃光了 `max_tokens`，降低思考档位（如 `--thinking low`）或换非推理 / 更大输出上限的模型 |
 | Ctrl+L 里没有码道模型 | `pi --list-models \| grep codearts`；为空则进一次 TUI 或 `node scripts/catalog.mjs` |
-| 想换账号 | 改 `~/.pi/agent/codearts.credentials.json`，`/reload` |
+| 想换账号 | 改 `~/.pi/agent/codearts.credentials.json`（确保未设置 `CODEARTS_CLI_AK`/`SK` 覆盖它），然后 `/reload` |
 | 状态栏不显示积分 | 确认 `settings.json` 的 `powerline.preset` 含 `extension_statuses`（`default` 预设自带），且 `hiddenExtensionStatusKeys` 里没有 `codearts` |
 | 想深挖日志 | `PI_CODEARTS_DEBUG=1 pi`，或看 `/codearts-doctor` 末尾的最近日志 |
 
@@ -188,13 +205,19 @@ cd ~/projects/pi-codearts
 git clone --depth 1 https://github.com/anheon/dsh-connect-codearts /tmp/dsh-cc
 cp /tmp/dsh-cc/src/protocol/*.ts vendor/dsh-connect-codearts/protocol/
 cp /tmp/dsh-cc/src/upstream.ts vendor/dsh-connect-codearts/
-node scripts/doctor.mjs && node scripts/rpc-smoke.py   # 回归
+node scripts/doctor.mjs && python3 scripts/rpc-smoke.py   # 回归（也可用 npm run doctor && npm run rpc-smoke）
 ```
 
 ## 卸载
 
 ```bash
+# 若通过方式一安装：
+pi remove git:github.com/wt-5783/pi-codearts@v0.1.0
+
+# 若通过方式二（克隆 + 符号链接）安装：
 rm ~/.pi/agent/extensions/pi-codearts
-rm -rf ~/.pi/agent/cache/pi-codearts ~/.pi/agent/codearts.credentials.json
 rm -rf ~/projects/pi-codearts
+
+# 清理本地缓存与凭证（两种方式通用）：
+rm -rf ~/.pi/agent/cache/pi-codearts ~/.pi/agent/codearts.credentials.json
 ```
